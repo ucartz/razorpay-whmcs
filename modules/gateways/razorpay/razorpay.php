@@ -114,12 +114,19 @@ catch (Errors\SignatureVerificationError $e)
     # Save to Gateway Log: name, data array, status
     logTransaction($gatewayParams["name"], $_POST, "Unsuccessful-".$error . ". Please check razorpay dashboard for Payment id: ".$razorpay_payment_id);
 }
-catch (Exception $e)
+catch (Throwable $e)
 {
     // Signature was valid (the payment is genuine) but we could not confirm
-    // the actual captured amount from Razorpay. Deliberately do NOT apply
-    // any payment here - guessing an amount is exactly the dangerous
-    // behaviour being fixed. This needs manual reconciliation instead.
+    // the actual captured amount from Razorpay - e.g. the network call to
+    // fetch the payment failed or threw something unexpected. Catching
+    // Throwable (not just Exception) here is deliberate: a TLS/connection
+    // failure talking to Razorpay's API turned out to be reachable through
+    // this exact call in the past and produced a blank, uncaught failure
+    // that never reached this log line at all. Whatever the failure type,
+    // it must land here and produce a normal redirect + log entry, not a
+    // blank page. Deliberately do NOT apply any payment here - guessing an
+    // amount is exactly the dangerous behaviour being fixed. This needs
+    // manual reconciliation instead.
     $error = 'WHMCS_ERROR: Payment to Razorpay succeeded but the captured amount could not be verified: ' . $e->getMessage();
 
     logTransaction($gatewayParams["name"], $_POST, "Unsuccessful-".$error." Payment id: ".$razorpay_payment_id." was NOT applied to invoice ".$merchant_order_id.". Verify the actual amount captured on the Razorpay Dashboard and apply it to the invoice manually.");

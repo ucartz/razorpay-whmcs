@@ -82,7 +82,15 @@ class Request
 
     public function setCurlSslOpts($curl)
     {
-        curl_setopt($curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_1);
+        // NOTE: this constant must stay in sync with the one defined near
+        // the top of this file. A prior update to this file (bumping the
+        // vendored SDK version) edited that definition but missed this
+        // usage, which silently kept forcing TLS 1.1 here via PHP curl's
+        // own natively-defined constant of the same old name - Razorpay's
+        // API rejects TLS 1.1 outright, breaking this specific call
+        // (payment/order fetches) while leaving other calls unaffected
+        // depending on which endpoint/connection they hit.
+        curl_setopt($curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
     }
 
     /**
