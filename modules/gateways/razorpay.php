@@ -377,43 +377,67 @@ function razorpay_link($params)
     $invoiceIdAttr = htmlspecialchars((string) $invoiceId, ENT_QUOTES, 'UTF-8');
 
     return <<<EOT
-<form name="razorpay-form" id="$elementId-form" action="$callbackUrl" method="POST" target="_top">
-    <input type="hidden" name="razorpay_payment_id" id="$elementId-payment-id" />
-    <input type="hidden" name="razorpay_order_id" id="$elementId-order-id" />
-    <input type="hidden" name="razorpay_signature" id="$elementId-signature" />
-    <input type="hidden" name="merchant_order_id" id="$elementId-invoice-id" value="$invoiceIdAttr"/>
-    <input type="button" class="btn btn-success" id="$elementId-button" value="Pay Now" />
-</form>
+<button type="button" class="btn btn-success" id="$elementId-button">Pay Now</button>
 <script src="$checkoutUrl"></script>
 <script>
 (function () {
     var options = $optionsJson;
+    var callbackUrl = "$callbackUrl";
+    var invoiceId = "$invoiceIdAttr";
+
+    // Deliberately no <form> element anywhere in this output. Some client
+    // area templates auto-submit any payment-looking <form> they find on
+    // an order/checkout page shortly after load (a real, findable pattern
+    // in this codebase's own theme, used for 3D-Secure remote-input
+    // processing) - if that logic also catches this gateway's form, it
+    // submits it with empty hidden fields before the customer has even
+    // seen the Razorpay button, let alone paid. That produces exactly the
+    // observed bug: no popup, no payment collected, an immediate POST with
+    // nothing in it, landing on a blank page. With no <form> present at
+    // all, there's nothing for any such script to find or trigger early -
+    // the POST is only ever constructed here, at the moment a real payment
+    // has actually completed.
     options.handler = function (response) {
-        var form = document.getElementById('$elementId-form');
+        var body = 'razorpay_payment_id=' + encodeURIComponent(response.razorpay_payment_id || '') +
+            '&razorpay_order_id=' + encodeURIComponent(response.razorpay_order_id || '') +
+            '&razorpay_signature=' + encodeURIComponent(response.razorpay_signature || '') +
+            '&merchant_order_id=' + encodeURIComponent(invoiceId);
 
-        document.getElementById('$elementId-payment-id').value = response.razorpay_payment_id;
-        document.getElementById('$elementId-order-id').value = response.razorpay_order_id;
-        document.getElementById('$elementId-signature').value = response.razorpay_signature;
-
-        // Some client-area templates globally intercept native <form> submit
-        // events on order/checkout pages for their own AJAX handling (WHMCS's
-        // own "Blocks" storefronts do this for other gateways via
-        // WHMCS.payment.event.checkoutFormSubmit). When that happens here,
-        // the POST to our callback still lands on the server correctly, but
-        // the browser never performs the real page navigation the callback's
-        // redirect depends on - the page is left stuck showing nothing.
-        // Posting directly via fetch() never fires a 'submit' event at all
-        // (nothing to intercept), and we explicitly drive the resulting
-        // navigation ourselves on the top-level window, which also escapes
-        // any iframe this might be rendered inside of.
-        fetch(form.action, {
+        fetch(callbackUrl, {
             method: 'POST',
-            body: new FormData(form),
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body,
             credentials: 'same-origin',
         }).then(function (res) {
             (window.top || window).location.href = res.url;
         }).catch(function () {
-            form.submit();
+            // fetch() itself failed outright (e.g. network error) - build
+            // and submit a form only now, with the real response data
+            // already in hand, rather than ever having one sitting on the
+            // page beforehand.
+            var fallbackForm = document.createElement('form');
+            fallbackForm.method = 'POST';
+            fallbackForm.action = callbackUrl;
+            fallbackForm.target = '_top';
+            fallbackForm.style.display = 'none';
+
+            var fields = {
+                razorpay_payment_id: response.razorpay_payment_id || '',
+                razorpay_order_id: response.razorpay_order_id || '',
+                razorpay_signature: response.razorpay_signature || '',
+                merchant_order_id: invoiceId,
+            };
+
+            Object.keys(fields).forEach(function (name) {
+                var input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = name;
+                input.value = fields[name];
+                fallbackForm.appendChild(input);
+            });
+
+            document.body.appendChild(fallbackForm);
+            fallbackForm.submit();
         });
     };
     var rzp = new Razorpay(options);
