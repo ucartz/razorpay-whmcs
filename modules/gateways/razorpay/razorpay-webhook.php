@@ -145,6 +145,19 @@ function orderPaid(array $data, $gatewayParams, $gatewayModuleName)
     $orderId = $data['payload']['order']['entity']['notes']['whmcs_order_id'];
     $razorpayPaymentId = $data['payload']['payment']['entity']['id'];
 
+    // Guard against a race between order/invoice creation and this webhook -
+    // see the matching comment in razorpay.php for the confirmed failure
+    // mode this avoids.
+    for ($invoiceVisibilityAttempt = 0; $invoiceVisibilityAttempt < 5; $invoiceVisibilityAttempt++)
+    {
+        if (Capsule::table('tblinvoices')->where('id', $orderId)->exists() === true)
+        {
+            break;
+        }
+
+        usleep(400000); // 400ms
+    }
+
     // Validate Callback Invoice ID.
     $merchant_order_id = checkCbInvoiceID($orderId, $gatewayParams['name']);
 

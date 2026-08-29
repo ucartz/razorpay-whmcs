@@ -34,6 +34,26 @@ if (!$gatewayParams['type'])
 $merchant_order_id   = (isset($_POST['merchant_order_id']) === true) ? $_POST['merchant_order_id'] : (isset($_GET['merchant_order_id']) === true ? $_GET['merchant_order_id'] : null);
 $razorpay_payment_id = (isset($_POST['razorpay_payment_id']) === true) ? $_POST['razorpay_payment_id'] : null;
 
+// Guard against a race between order/invoice creation and this callback.
+// When a customer pays immediately after placing a new order, Razorpay's
+// checkout can complete and call back within seconds - sometimes before the
+// brand-new invoice is visible to checkCbInvoiceID() below (confirmed via
+// direct testing: an old, settled invoice always verifies fine; a
+// just-created or nonexistent one produces a blank, silent failure with no
+// error output at all - checkCbInvoiceID() gives us no way to retry after
+// the fact, since it die()s immediately). Waiting briefly for our own
+// direct visibility of the row is a reasonable proxy: if we can see it,
+// checkCbInvoiceID() finding it too becomes overwhelmingly likely.
+for ($invoiceVisibilityAttempt = 0; $invoiceVisibilityAttempt < 5; $invoiceVisibilityAttempt++)
+{
+    if (Capsule::table('tblinvoices')->where('id', $merchant_order_id)->exists() === true)
+    {
+        break;
+    }
+
+    usleep(400000); // 400ms
+}
+
 // Validate Callback Invoice ID.
 $merchant_order_id = checkCbInvoiceID($merchant_order_id, $gatewayParams['name']);
 
