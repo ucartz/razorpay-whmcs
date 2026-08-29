@@ -377,11 +377,11 @@ function razorpay_link($params)
     $invoiceIdAttr = htmlspecialchars((string) $invoiceId, ENT_QUOTES, 'UTF-8');
 
     return <<<EOT
-<form name="razorpay-form" id="$elementId-form" action="$callbackUrl" method="POST">
+<form name="razorpay-form" id="$elementId-form" action="$callbackUrl" method="POST" target="_top">
     <input type="hidden" name="razorpay_payment_id" id="$elementId-payment-id" />
     <input type="hidden" name="razorpay_order_id" id="$elementId-order-id" />
     <input type="hidden" name="razorpay_signature" id="$elementId-signature" />
-    <input type="hidden" name="merchant_order_id" id="merchant_order_id" value="$invoiceIdAttr"/>
+    <input type="hidden" name="merchant_order_id" id="$elementId-invoice-id" value="$invoiceIdAttr"/>
     <input type="button" class="btn btn-success" id="$elementId-button" value="Pay Now" />
 </form>
 <script src="$checkoutUrl"></script>
@@ -389,10 +389,32 @@ function razorpay_link($params)
 (function () {
     var options = $optionsJson;
     options.handler = function (response) {
+        var form = document.getElementById('$elementId-form');
+
         document.getElementById('$elementId-payment-id').value = response.razorpay_payment_id;
         document.getElementById('$elementId-order-id').value = response.razorpay_order_id;
         document.getElementById('$elementId-signature').value = response.razorpay_signature;
-        document.getElementById('$elementId-form').submit();
+
+        // Some client-area templates globally intercept native <form> submit
+        // events on order/checkout pages for their own AJAX handling (WHMCS's
+        // own "Blocks" storefronts do this for other gateways via
+        // WHMCS.payment.event.checkoutFormSubmit). When that happens here,
+        // the POST to our callback still lands on the server correctly, but
+        // the browser never performs the real page navigation the callback's
+        // redirect depends on - the page is left stuck showing nothing.
+        // Posting directly via fetch() never fires a 'submit' event at all
+        // (nothing to intercept), and we explicitly drive the resulting
+        // navigation ourselves on the top-level window, which also escapes
+        // any iframe this might be rendered inside of.
+        fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            credentials: 'same-origin',
+        }).then(function (res) {
+            (window.top || window).location.href = res.url;
+        }).catch(function () {
+            form.submit();
+        });
     };
     var rzp = new Razorpay(options);
     document.getElementById('$elementId-button').addEventListener('click', function (e) {
