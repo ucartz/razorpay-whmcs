@@ -11,7 +11,7 @@ require_once __DIR__.'/razorpay/rzpordermapping.php';
 use Razorpay\Api\Api;
 use Razorpay\Api\Errors;
 
-const RAZORPAY_WHMCS_VERSION= '3.1.0';
+const RAZORPAY_WHMCS_VERSION= '3.2.0';
 const RAZORPAY_PAYMENT_ID   = 'razorpay_payment_id';
 const RAZORPAY_ORDER_ID     = 'razorpay_order_id';
 const RAZORPAY_SIGNATURE    = 'razorpay_signature';
@@ -289,7 +289,15 @@ function razorpay_link($params)
     // Client Parameters
     $name = trim($params['clientdetails']['firstname'].' '.$params['clientdetails']['lastname']);
     $email = $params['clientdetails']['email'];
-    $contact = $params['clientdetails']['phonenumber'];
+    // Razorpay needs the full international number. WHMCS keeps the country code in phonecc and
+    // only the national part in phonenumber, so passing phonenumber alone made Razorpay assume
+    // +91 (India) for every customer, e.g. a UK number was recorded as +91 7xxx xxxxxx.
+    $phoneCc = preg_replace('/\\D/', '', (string) ($params['clientdetails']['phonecc'] ?? ''));
+    $phoneNum = preg_replace('/\\D/', '', (string) ($params['clientdetails']['phonenumber'] ?? ''));
+    if ($phoneNum !== '' && $phoneCc !== '' && $phoneCc !== '39') {
+        $phoneNum = ltrim($phoneNum, '0'); // drop the national trunk 0 (not for Italy)
+    }
+    $contact = ($phoneNum === '') ? '' : (($phoneCc !== '') ? '+' . $phoneCc . $phoneNum : $phoneNum);
 
     // System Parameters
     $companyName = $params['companyname'];
@@ -378,12 +386,25 @@ function razorpay_link($params)
 
     return <<<EOT
 <button type="button" class="btn btn-success" id="$elementId-button">Pay Now</button>
+<div id="$elementId-notice" class="alert alert-warning" style="display:none;margin-top:10px;" role="alert"></div>
 <script src="$checkoutUrl"></script>
 <script>
 (function () {
     var options = $optionsJson;
     var callbackUrl = "$callbackUrl";
     var invoiceId = "$invoiceIdAttr";
+    var noticeEl = document.getElementById('$elementId-notice');
+
+    function showNotice(text) {
+        if (!noticeEl) { return; }
+        noticeEl.textContent = text;
+        noticeEl.style.display = 'block';
+    }
+
+    function hideNotice() {
+        if (!noticeEl) { return; }
+        noticeEl.style.display = 'none';
+    }
 
     // Deliberately no <form> element anywhere in this output. Some client
     // area templates auto-submit any payment-looking <form> they find on
@@ -398,6 +419,7 @@ function razorpay_link($params)
     // the POST is only ever constructed here, at the moment a real payment
     // has actually completed.
     options.handler = function (response) {
+        hideNotice();
         var body = 'razorpay_payment_id=' + encodeURIComponent(response.razorpay_payment_id || '') +
             '&razorpay_order_id=' + encodeURIComponent(response.razorpay_order_id || '') +
             '&razorpay_signature=' + encodeURIComponent(response.razorpay_signature || '') +
@@ -440,9 +462,31 @@ function razorpay_link($params)
             fallbackForm.submit();
         });
     };
+    options.modal = {
+        ondismiss: function () {
+            // Customer closed the widget themselves without completing it.
+            // Nothing failed, nothing to tell them.
+        }
+    };
+
     var rzp = new Razorpay(options);
+
+    // Without this handler, Razorpay's Checkout.js falls back to its own
+    // generic "Oops! Something went wrong. Payment Failed" alert on any
+    // client-side checkout failure. This was seen repeatedly in Microsoft
+    // Edge while Chrome worked on the same machine, most likely Edge's
+    // Tracking Prevention interfering with a request the widget makes. The
+    // charge can still go through on Razorpay's side when this fires (the
+    // order.paid webhook then reconciles the invoice within seconds), so the
+    // message asks the customer to check rather than assume nothing
+    // happened, and never blocks a retry the way the native alert does.
+    rzp.on('payment.failed', function (response) {
+        showNotice('We could not confirm this payment in your browser. If an amount was deducted, this invoice will show as Paid within a minute or two once we hear back from the payment provider. Please check back before trying again, or use a different browser or payment method.');
+    });
+
     document.getElementById('$elementId-button').addEventListener('click', function (e) {
         e.preventDefault();
+        hideNotice();
         rzp.open();
     });
 })();

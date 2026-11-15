@@ -2,6 +2,12 @@
 
 All notable changes to this module are documented here.
 
+## 3.2.0 (2026-11-15)
+
+### Fixed
+- **Customer phone number sent to Razorpay without its country code.** WHMCS stores the country calling code in `phonecc` and only the national number in `phonenumber`, and the module passed `phonenumber` alone as the checkout `prefill.contact`. Razorpay then assumed +91 (India) for every customer, so customers outside India saw a wrong number pre-filled and payments were recorded with the wrong contact (a UK number became +91 7xxx xxxxxx). The module now sends the full international number (`+` country code + digits), drops a leading national trunk `0`, keeps it for Italy (+39) where it is part of the number, and sends an empty value when the client has no phone number.
+- **Razorpay's generic "Oops! Something went wrong. Payment Failed" alert.** When checkout failed in the browser (seen repeatedly in Microsoft Edge, most likely its Tracking Prevention), Razorpay's own alert suggested nothing had happened, although the charge could still succeed and be reconciled by the webhook. The module now handles `payment.failed` itself and shows a notice under the Pay Now button asking the customer to check the invoice before trying again, or to use another browser or payment method. Closing the checkout window without paying shows nothing, and the notice clears on the next attempt.
+
 ## 3.1.0 — 2026-10-22
 
 ### Security
